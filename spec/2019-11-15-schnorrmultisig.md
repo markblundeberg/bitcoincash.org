@@ -41,7 +41,7 @@ Mode 2 (new Schnorr support, M-of-N: consumes 2N+2 items from stack):
 * If the number of valid signatures is equal to M, return True.
 * If the number of valid signatures is equal to 0, return False. (must be checked after previous)
 
-Whereas execution of the original OP_CHECKMULTISIG counts as N+1 opcodes (towards the 201 opcode limit), the new mode will count as M+1 opcodes (towards the 201 opcode limit). ** TODO : HOW IS SIGOPS COUNT AFFECTED **
+Whereas execution of the original OP_CHECKMULTISIG counts as N+1 opcodes (towards the 201 opcode limit), the new mode will count as M+1 opcodes (towards the 201 opcode limit). Note that the current sigops counting will be unaffected in this mechanism -- i.e., it will count as 20 sigops [except in some P2SH scripts where it will count as N sigops](https://github.com/bitcoin/bips/blob/master/bip-0016.mediawiki). However, I recommend that in a new SigOps2 accounting, the number of actual signature checks be used for both mechanism, with NULL signatures contributing 0 sigops (can vary for old mode, but is either 0 or M for new mode).
 
 ## Triggering and execution mechanism
 
@@ -53,7 +53,7 @@ In pseudocode:
     Pop N number from stack ; check bounds 0 <= N <= 20
     Pop N items from stack [pub0...pubN]
     Pop M number from stack ; check bounds 0 <= M <= N
-    If M > 0:
+    If N > 0:
         Let L = length of top stack item
     Else:
         Let L = 0
@@ -113,7 +113,7 @@ Let `R` be the length of the redeemScript and its push opcode, combined.
 
 The legacy mode scriptSig `<dummy> <sig0> ... <sigM>` can be as large as 73M + 1 + R bytes, which is the upper limit assuming all max-sized ECDSA signatures.
 
-The new mode scriptSig `<sig0> ... <sigN>` will be 66M + N - M + R bytes. This usually shorter than legacy mode, but not always (consider a 1-of-9, 1-of-10, etc.).
+The new mode scriptSig `<sig0> ... <sigN>` will be 65M + N + R bytes. This usually shorter than legacy mode, but not always (consider a 1-of-9, 1-of-10, etc., or the degenerate case of 0-of-N).
 
 # Subtleties for unusual scripts
 
@@ -131,11 +131,11 @@ In some smart contracts it is useful to rely on a False-returning OP_CHECKMULTIS
 
 In legacy verification, it is permitted to have some of public keys be garbage data, provided that the signature verification finishes before those public keys are reached. In the new mode the same idea applies: the contents of public key stack items are not examined at all if the corresponding signature is NULL.
 
-## 0-of-N multisignatures
+## 0-of-0 multisignatures
 
-A 0-of-N multisignature is currently valid, and remains valid under current mechanics. However, the spending mechanics have been altered. Previously it would be necessary to push a dummy element, while under the new mechanics, no item is pushed before M.
+A 0-of-0 multisignature is currently valid, and remains valid under current mechanics. However, the spending mechanics have been altered. Previously it would be necessary to push a dummy element, while under the new mechanics, no item is pushed before M.
 
-As before, 0-of-N multisignatures always result in a success.
+Currently, 0-of-0 multisignatures result in success (just like 0-of-N signatures); this is maintained in the new mode.
 
 # Rationale and commentary on design decisions
 
