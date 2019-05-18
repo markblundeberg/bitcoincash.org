@@ -3,7 +3,7 @@ layout: specification
 title: 2019-NOV-15 Schnorr OP_CHECKMULTISIG specification
 date: 2019-05-14
 activation: x
-version: 0.2 (DRAFT)
+version: 0.3 (DRAFT)
 author: Mark B. Lundeberg
 ---
 
