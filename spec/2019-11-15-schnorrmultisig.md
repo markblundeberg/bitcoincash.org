@@ -7,6 +7,8 @@ version: 0.3 (DRAFT)
 author: Mark B. Lundeberg
 ---
 
+Discussion on Telegram workgroup: https://t.me/joinchat/Jw9WhUbcT1vEc6V2z-uH8Q
+
 # Summary
 
 OP_CHECKMULTISIG and OP_CHECKMULTISIGVERIFY will be upgraded to accept Schnorr signatures in a way that is compatible with batch verification.
