@@ -3,7 +3,7 @@ layout: specification
 title: 2019-NOV-15 Schnorr OP_CHECKMULTISIG specification
 date: 2019-05-14
 activation: x
-version: 0.3 (DRAFT)
+version: 0.4 (DRAFT)
 author: Mark B. Lundeberg
 ---
 
@@ -21,7 +21,7 @@ In [the last upgrade](2019-05-15-upgrade.md), we added Schnorr support to OP_CHE
 
 Although we could have added support to OP_CHECKMULTISIG as well (which would have been overall simpler), this would conflict with the desire to do batch verification in future: Currently with OP_CHECKMULTISIG validation, it is needed to check a signature against multiple public keys in order to find a possible match. In Schnorr batch verification however, it is required to know ahead of time, which signatures are supposed to match with which public keys. Without a clear path forward on how to resolve this, we postponed the issue and simply prevented Schnorr signatures from being used in OP_CHECKMULTISIG.
 
-Schnorr aggregated signatures (with OP_CHECKSIG) are one way to do multisignatures, but they are technically limited and thus far from being a drop-in replacement for the familiar Bitcoin multisig. Besides that, it is also desirable that any existing coin can be spent using Schnorr signatures, and there are numerous OP_CHECKMULTISIG wallets and coins in existence that deserve ongoing support.
+Schnorr aggregated signatures (with OP_CHECKSIG) are one way to do multisignatures, but they are technically limited and thus far from being a drop-in replacement for the familiar Bitcoin multisig. Besides that, it is also desirable that any existing coin can be spent using Schnorr signatures, and there are numerous OP_CHECKMULTISIG wallets and coins in existence that we want to be able to take advantage of Schnorr signatures.
 
 # Specification
 
@@ -33,66 +33,77 @@ Mode 1 (legacy ECDSA support, M-of-N; consumes N+M+3 items from stack):
 
 The precise validation mechanics of this are complex and full of corner cases; the source code is the best reference. Most notably, for 2-of-3 (M=2, N=3), `sig0` may be a valid ECDSA transaction signature from `pub0` or from `pub1`; `sig1` may be from `pub1` (if `sig0` is from `pub0`) or `pub2`. The `dummy` element can assume any value but the NULLDUMMY policy rule (soon to be made consensus) restricts it to be NULL. Historical transactions (prior to FORKID, STRICTENC and NULLFAIL rules) had even more freedoms and [weirdness](https://decred.org/research/todd2014.pdf)).
 
-Mode 2 (new Schnorr support, M-of-N: consumes 2N+2 items from stack):
+Mode 2 (new Schnorr support, M-of-N; consumes N+M+3 items from stack):
 
-    <sig0> ... <sigN> M <pub0> ... <pubN> N OP_CHECKMULTISIG
+    <checkbits> <sig0> ... <sigM> M <pub0> ... <pubN> N OP_CHECKMULTISIG
 
-* For each `sigI` for all values of `I`, its value must be either NULL (bytelength 0) or a valid Schnorr transaction signature (bytelength 65) from the corresponding key `pubI`.
-* If any non-null *invalid* signatures are present, the script fails (hardcoded NULLFAIL rule).
-* If the number of valid signatures is not 0 or M, fail script.
-* If the number of valid signatures is equal to M, return True.
-* If the number of valid signatures is equal to 0, return False. (must be checked after previous)
-
-Whereas execution of the original OP_CHECKMULTISIG counts as N+1 opcodes (towards the 201 opcode limit), the new mode will count as M+1 opcodes (towards the 201 opcode limit). Note that the current sigops counting will be unaffected in this mechanism -- i.e., it will count as 20 sigops [except in some P2SH scripts where it will count as N sigops](https://github.com/bitcoin/bips/blob/master/bip-0016.mediawiki). However, I recommend that in a new SigOps2 accounting, the number of actual signature checks be used for both mechanism, with NULL signatures contributing 0 sigops (can vary for old mode, but is either 0 or M for new mode).
+* The `dummy` element has now been repurposed as an integer that we call `checkbits`, whose bit representation indicates which signatures should be checked against which public keys.
+* Crucially, each of the signature checks requested by `checkbits` *must* be valid, or else the script fails.
+* In mode 2, it is necessary that all public keys are validly encoded.
+* In mode 2, ECDSA signatures are not allowed.
 
 ## Triggering and execution mechanism
 
 Note that the above description leaves some ambiguity -- how does one know whether to execute in mode 1 or mode 2?
-Execution of the new Schnorr mode 2 is triggered based on the last signature item (the item on stack just before M). If it has size 0 or size 65, then mode 2 is activated. However in the special case of M=0, this stack item is *not* examined and mode 2 executes by default.
+Execution of the new Schnorr mode 2 is triggered by first doing a quick scan of the content of public keys and signatures. The new mode executes when:
 
-In pseudocode:
+- The upgrade is active based on MTP; and
+- Every public key is encoded properly under current encoding rules: 33 byte compressed key starting with 0x02 or 0x03, or 65 byte uncompressed key starting with 0x04; and
+- Every signature is null (0-length) or correctly encoded Schnorr (65 bytes long, with a valid hashtype byte under current encoding rules).
 
-    Pop N number from stack ; check bounds 0 <= N <= 20
+If any of the above conditions is not satisfied, then execution proceeds in the legacy mode where behaviour is unchanged from before.
+
+The new mode operates by checking public keys against signatures, according to the `checkbits` number. In pseudocode, the full OP_CHECKMULTISIG code is:
+
+    Pop N number from stack ; check bounds 0 <= N <= 20.
+    Add N to nOpCount; if nOpCount exceeds 201 limit, fail script.
     Pop N items from stack [pub0...pubN]
-    Pop M number from stack ; check bounds 0 <= M <= N
-    If N > 0:
-        Let L = length of top stack item
+    Pop M number from stack ; check bounds 0 <= M <= N.
+    Set a cursor on the last signature.
+    Set another cursor on the last public key.
+    Calculate scriptCode.
+    If activated, and all pubkeys are correctly encoded, and all signatures are either null or correctly encoded Schnorr, then:
+        # New mode (2)
+        Convert the dummy element to integer, called checkbits; if it was not minimally encoded, fail script.
+        If checkbits < 0, fail script.
+        Loop while the signature and key cursors are not depleted:
+            If the least significant bit of checkbits is 1, then:
+                Validate the current signature against the current public key; if invalid, fail script.
+                Move the signature cursor back one position.
+            Shift checkbits right by one bit. (checkbits := checkbits >> 1)
+            Move the public key cursor back one position.
+        If remaining checkbits is nonzero, fail script.
+        If the signature cursor has remaining signatures, then success=False; if depleted, then success=True.
     Else:
-        Let L = 0
-    If activated and L == 0 or L == 65:
-        # Mode 2
-        Add M to nOpCount; if nOpCount exceeds 201 limit, fail script.
-        Pop N signatures from stack [sig0...sigN]
-        Let validsigs=0
-        For I in 0...N-1:
-            If len(sigI) == 0:
-                continue
-            If len(sigI) != 65:
-                FAIL
-            If sigI or pubI have bad encoding per STRICTENC:
-                FAIL
-            If sigI is not valid tx Schnorr signature from pubI:
-                FAIL
-            validsigs += 1
-        If validsigs == M
-            Let success = True
-        Elif validsigs == 0:
-            Let success = False
-        Else:
-            FAIL
-    Else:
-        # Mode 1:
-        Add N to nOpCount; if nOpCount exceeds 201 limit, fail script.
-        ...
-        ... (see existing code.)
-        ...
+        # Legacy mode (1)
+        If pre-BCH-fork, then run findAndDelete on scriptCode.
+        Loop while the signature cursor is not depleted:
+            Check public key encoding.
+            Check signature encoding; exclude 65-byte signatures (Schnorr).
+            Validate the current signature against the current public key.
+            If valid, then move signature cursor back one position.
+            Move the public key cursor back one position.
+            If more signatures remain than public keys, set success = False and abort loop early.
+        If loop was not aborted, success = True.
+        If NULLDUMMY rule is active, then ensure the dummy element is null.
+
+    If success is False and NULLFAIL rule is active, then ensure all signatures were null.
+
     Push success onto stack
     If opcode is OP_CHECKMULTISIGVERIFY:
         Pop success from stack
         If not success:
             FAIL
 
-(Non-consensus rules like MINIMALDATA have been omitted here, for simplicity).
+Some features to note:
+
+- In the legacy mode, some of the public keys may be garbage data, even if strict encoding rules are being applied. This is possible since the loop ends before all public keys have been examined.
+- In the new mode, it is not necessary to run findAndDelete ever, since it applies only to transactions well after the BCH fork.
+- In the new mode, `checkbits` must be minimally encoded, regardless of MINIMALDATA flag (as the latter not a consensus rule).
+- The new mode design means that `checkbits` has only one valid representation for a given set of signatures, provided that all public keys are distinct. Thus ordinarily, it is not malleable. Note however that if some public keys are repeated, however, then it may be possible to reorder the signatures and/or flip bits to apply the signature checks to different public keys.
+- For a failing CHECKMULTISIG (that returns False on stack), the previously adopted NULLFAIL consensus rule means that all signatures must be null. However, only the last public key needs to be correctly encoded. If all pubkeys are correctly encoded, then the new mode executes and the checkbits element must be zero (null). If any keys are not correctly encoded, then legacy mode executes and the dummy element need only be null if the NULLDUMMY flag is adopted.
+- In the legacy mode, it can require up to N signature checks in order to complete. In new mode, at most M signature checks occur.
+- For M=0, the opcode always evaluates True.
 
 # Wallet implementation guidelines
 
@@ -107,6 +118,15 @@ This creates some problems in particular when some of the parties are hardware w
 * If it is not known that all parties can accept Schnorr requests, then only generate ECDSA multisignature requests.
 * Have the ability to participate either ECDSA Schnorr multisignatures, if requested.
 
+## Calculating and pushing checkbits
+
+Note that the new mechanism requires keeping track of which signatures go with which public keys, which ordinarily wallets may not be careful of (but should really be doing, in order to validate and correctly order the signatures from co-signers). Wallets must also correctly include the `checkbits` parameter, which means a) minimally encoding `checkbits` into bytes, and b) minimally pushing this bytestring in the scriptSig. This process can be abbreviated as:
+
+* If `checkbits` <= 16, then use OP_1 through OP_16 (opcode `0x50 + checkbits`), otherwise:
+* Encode checkbits as a bytestring in little-endian order; trim off any trailing zero bytes.
+* If the last byte has its high bit set, then append a single zero byte.
+* Push the bytestring using a simple push.
+
 ## ScriptSig size
 
 Wallets need to know ahead of time the maximum transaction size, in order to set the transaction fee.
@@ -115,46 +135,36 @@ Let `R` be the length of the redeemScript and its push opcode, combined.
 
 The legacy mode scriptSig `<dummy> <sig0> ... <sigM>` can be as large as 73M + 1 + R bytes, which is the upper limit assuming all max-sized ECDSA signatures.
 
-The new mode scriptSig `<sig0> ... <sigN>` will be 65M + N + R bytes. This usually shorter than legacy mode, but not always (consider a 1-of-9, 1-of-10, etc., or the degenerate case of 0-of-N).
-
-# Subtleties for unusual scripts
-
-## Interaction with stack manipulation
-
-Since the number of pushed items is no longer a predictable constant, smart contract designers need to be careful about combining heavy stack manipulation with OP_CHECKMULTISIG. In particular they should avoid relying on operations (OP_PICK, OP_ROLL) that reach deep into the stack and access items before the OP_CHECKMULTISIG signature list. The ability of spends to shift the stack by choosing between ECDSA / Schnorr mode may create very sublte vulnerabilities in such scripts.
-
-As far as we are aware, such a strange combination of OP_CHECKMULTISIG and heavy stack manipulation does not occur in any current smart contract systems of note.
-
-## NULL-ed multisignatures
-
-In some smart contracts it is useful to rely on a False-returning OP_CHECKMULTISIG operation, which occurs when all signatures are NULL. Prior to this upgrade, this would happen by providing M+1 null items in scriptsig (dummy element then M null signatures). The new mechanics however overrides this, so that NULL-ed signature lists *must* be provided in the new mode, i.e., N null items in the scriptsig.
-
-## Garbage public keys
-
-In legacy verification, it is permitted to have some of public keys be garbage data, provided that the signature verification finishes before those public keys are reached. In the new mode the same idea applies: the contents of public key stack items are not examined at all if the corresponding signature is NULL.
-
-## 0-of-0 multisignatures
-
-A 0-of-0 multisignature is currently valid, and remains valid under current mechanics. However, the spending mechanics have been altered. Previously it would be necessary to push a dummy element, while under the new mechanics, no item is pushed before M.
-
-Currently, 0-of-0 multisignatures result in success (just like 0-of-N signatures); this is maintained in the new mode.
+The new mode scriptSig `<sig0> ... <sigN>` will have a length that varies depending on minimal encoding of `checkbits`. Wallets should allocate for fees based on the largest possible encoding, which gives a scriptSig size of:
+* Always 66M + R + 1 bytes, for N <= 4.
+* Up to 66M + R + 2 bytes, for 5 <= N <= 7.
+* Up to 66M + R + 3 bytes, for 8 <= N <= 15.
+* Up to 66M + R + 4 bytes, for 16 <= N <= 20.
 
 # Rationale and commentary on design decisions
 
-## No sentinel value
+## Repurposing of dummy element
 
-In an earlier edition it was proposed to use an additional sentinel item on stack just before M, to trigger between the two modes. It was thought that a sentinel-less mechanism would be too ambiguous. However, this turns out not to be true.
+In an earlier edition it was proposed to require N signature items (either a signature or NULL) for new mode instead of M items and a dummy element. The following problems inspired a move away from that approach:
+
+* Triggering mechanics for the new mode were somewhat of a kluge.
+* Some scripts rely on a certain expected stack layout. This is particularly the case for recently introduced high-level smart contracting languages that compile down to script, which reach deep into the stack.
+
+That said, a scan of the blockchain only found about a hundred instances of scripts that would be impacted by stack layout changes. All were based on a template as seen in [this spend](https://blockchair.com/bitcoin-cash/transaction/612bd9fc5cb40501f8704028da76c4c64c02eb0ac80e756870dba5cf32650753), where OP_DEPTH was used to choose an OP_IF execution branch.
 
 ## No mixing ECSDA / Schnorr
 
-Allowing mixed signature types would help alleviate the issue of supporting mixed wallet versions that do support / don't support Schnorr signatures.
+Allowing mixed signature types might help alleviate the issue of supporting mixed wallet versions that do support / don't support Schnorr signatures.
+However, this would mean that an all-ECDSA signature list could be easily converted to the new mode, unless extra complicated steps were taken to prevent that conversion. As this is an undesirable malleability mechanism, we opted to simply exclude ECDSA from the new mode, just as Schnorr are excluded from the legacy mode.
 
-However, it is not possible to so simply discriminate between the mode 1 / mode 2 divide if mixing of types is allowed. Not only that, but it would introduce a new third-party malleability mechanism: any legacy mode (all-ECDSA) scriptSig could be trivially converted to a new mode scriptSig.
+## Triggering on pubkey and signature encoding validity
 
-## Preference to new mechanics
+An alternative, slightly simpler trigger mechanism would be to trigger on the dummy element being non-null, which cou.d make things overall simpler as it automatically integrates the 'nulldummy' rule.
 
-Although preserving legacy OP_CHECKMULTISIG mechanics for the standard case (a multisignature wallet), we have assigned unusual cases like NULL-ed signatures and 0-of-N multisignatures to only use the new preferred mechanism. The rationale is that the new mechanics are "cleaner", and they set the stage for clean integration of possible future signature algorithms. In future, the legacy mechanism will be ECDSA-only and the new mechanism will be for all other signature algorithms.
+The choice to trigger on public key and signature validity is done so that the new mode is able to support both true- and false- returning executions of checkmultisig; for the false-returning execution, it is required for the dummy element to be null.
+
+In addition, it is valuable if the new mode has been implemented with strict public key encodings for all public keys, as it is expected that this strict context would help simplify future introductions of alternative signature schemes (with different pubkey encodings).
 
 # Acknowledgements
 
-None so far.
+Thanks to Tendo Pein, Rosco Kalis, and Amaury Sechet for valuable feedback.
