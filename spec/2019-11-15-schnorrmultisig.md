@@ -1,9 +1,9 @@
 ---
 layout: specification
 title: 2019-NOV-15 Schnorr OP_CHECKMULTISIG specification
-date: 2019-05-14
+date: 2019-06-07
 activation: x
-version: 0.4 (DRAFT)
+version: 0.5 (DRAFT)
 author: Mark B. Lundeberg
 ---
 
@@ -31,7 +31,7 @@ Mode 1 (legacy ECDSA support, M-of-N; consumes N+M+3 items from stack):
 
     <dummy> <sig0> ... <sigM> M <pub0> ... <pubN> N OP_CHECKMULTISIG
 
-The precise validation mechanics of this are complex and full of corner cases; the source code is the best reference. Most notably, for 2-of-3 (M=2, N=3), `sig0` may be a valid ECDSA transaction signature from `pub0` or from `pub1`; `sig1` may be from `pub1` (if `sig0` is from `pub0`) or `pub2`. The `dummy` element can assume any value but the NULLDUMMY policy rule (soon to be made consensus) restricts it to be NULL. Historical transactions (prior to FORKID, STRICTENC and NULLFAIL rules) had even more freedoms and [weirdness](https://decred.org/research/todd2014.pdf)).
+The precise validation mechanics of this are complex and full of corner cases; the source code is the best reference. Most notably, for 2-of-3 (M=2, N=3), `sig0` may be a valid ECDSA transaction signature from `pub0` or from `pub1`; `sig1` may be from `pub1` (if `sig0` is from `pub0`) or `pub2`. The `dummy` element must be NULL. Historical transactions (prior to FORKID, STRICTENC and NULLFAIL rules) had even more freedoms and [weirdness](https://decred.org/research/todd2014.pdf)).
 
 Mode 2 (new Schnorr support, M-of-N; consumes N+M+3 items from stack):
 
@@ -44,14 +44,11 @@ Mode 2 (new Schnorr support, M-of-N; consumes N+M+3 items from stack):
 
 ## Triggering and execution mechanism
 
-Note that the above description leaves some ambiguity -- how does one know whether to execute in mode 1 or mode 2?
-Execution of the new Schnorr mode 2 is triggered by first doing a quick scan of the content of public keys and signatures. The new mode executes when:
+Whether to execute in mode 1 or mode 2 is detemined by the value of the dummy element.
+* If the dummy element is NULL, then Mode 1 is executed
+* If the dummy element is non-NULL, then Mode 2 is executed.
 
-- The upgrade is active based on MTP; and
-- Every public key is encoded properly under current encoding rules: 33 byte compressed key starting with 0x02 or 0x03, or 65 byte uncompressed key starting with 0x04; and
-- Every signature is null (0-length) or correctly encoded Schnorr (65 bytes long, with a valid hashtype byte under current encoding rules).
-
-If any of the above conditions is not satisfied, then execution proceeds in the legacy mode where behaviour is unchanged from before.
+In practice "0-of-N" behavior is indistinguishable between the two modes.
 
 The new mode operates by checking public keys against signatures, according to the `checkbits` number. In pseudocode, the full OP_CHECKMULTISIG code is:
 
