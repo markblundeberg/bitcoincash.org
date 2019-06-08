@@ -1,9 +1,9 @@
 ---
 layout: specification
 title: 2019-NOV-15 Schnorr OP_CHECKMULTISIG specification
-date: 2019-05-14
+date: 2019-06-07
 activation: x
-version: 0.4 (DRAFT)
+version: 0.5 (DRAFT)
 author: Mark B. Lundeberg
 ---
 
@@ -31,7 +31,7 @@ Mode 1 (legacy ECDSA support, M-of-N; consumes N+M+3 items from stack):
 
     <dummy> <sig0> ... <sigM> M <pub0> ... <pubN> N OP_CHECKMULTISIG
 
-The precise validation mechanics of this are complex and full of corner cases; the source code is the best reference. Most notably, for 2-of-3 (M=2, N=3), `sig0` may be a valid ECDSA transaction signature from `pub0` or from `pub1`; `sig1` may be from `pub1` (if `sig0` is from `pub0`) or `pub2`. The `dummy` element can assume any value but the NULLDUMMY policy rule (soon to be made consensus) restricts it to be NULL. Historical transactions (prior to FORKID, STRICTENC and NULLFAIL rules) had even more freedoms and [weirdness](https://decred.org/research/todd2014.pdf)).
+The precise validation mechanics of this are complex and full of corner cases; the source code is the best reference. Most notably, for 2-of-3 (M=2, N=3), `sig0` may be a valid ECDSA transaction signature from `pub0` or from `pub1`; `sig1` may be from `pub1` (if `sig0` is from `pub0`) or `pub2`. The `dummy` element must be NULL (Making the semantics of Mode 1 the same as current OP_CHECKMULTISIG with NULLDUMMY). Historical transactions (prior to FORKID, STRICTENC and NULLFAIL rules) had even more freedoms and [weirdness](https://decred.org/research/todd2014.pdf)).
 
 Mode 2 (new Schnorr support, M-of-N; consumes N+M+3 items from stack):
 
@@ -44,14 +44,11 @@ Mode 2 (new Schnorr support, M-of-N; consumes N+M+3 items from stack):
 
 ## Triggering and execution mechanism
 
-Note that the above description leaves some ambiguity -- how does one know whether to execute in mode 1 or mode 2?
-Execution of the new Schnorr mode 2 is triggered by first doing a quick scan of the content of public keys and signatures. The new mode executes when:
+Whether to execute in mode 1 or mode 2 is detemined by the value of the checkbits element.
+* If the checkbits element is NULL, then Mode 1 is executed
+* If the checkbits element is non-NULL, then Mode 2 is executed.
 
-- The upgrade is active based on MTP; and
-- Every public key is encoded properly under current encoding rules: 33 byte compressed key starting with 0x02 or 0x03, or 65 byte uncompressed key starting with 0x04; and
-- Every signature is null (0-length) or correctly encoded Schnorr (65 bytes long, with a valid hashtype byte under current encoding rules).
-
-If any of the above conditions is not satisfied, then execution proceeds in the legacy mode where behaviour is unchanged from before.
+"0-of-N" will always execute in Mode 1, since the checkbits/dummy element needs to be null for this case.
 
 The new mode operates by checking public keys against signatures, according to the `checkbits` number. In pseudocode, the full OP_CHECKMULTISIG code is:
 
@@ -62,12 +59,14 @@ The new mode operates by checking public keys against signatures, according to t
     Set a cursor on the last signature.
     Set another cursor on the last public key.
     Calculate scriptCode.
-    If activated, and all pubkeys are correctly encoded, and all signatures are either null or correctly encoded Schnorr, then:
+    If activated, and the checkbits element is not null, then:
         # New mode (2)
-        Convert the dummy element to integer, called checkbits; if it was not minimally encoded, fail script.
+        Convert the checkbits element to integer, called checkbits; if it was not minimally encoded, fail script.
         If checkbits < 0, fail script.
         Loop while the signature and key cursors are not depleted:
             If the least significant bit of checkbits is 1, then:
+                If the current pubkey is not correctly encoded, fail script.
+                If the signature is not encoded correctly, fail script (Schnorr signature must be 64 bytes, and the hashtype byte needs to be checked).
                 Validate the current signature against the current public key; if invalid, fail script.
                 Move the signature cursor back one position.
             Shift checkbits right by one bit. (checkbits := checkbits >> 1)
@@ -85,9 +84,8 @@ The new mode operates by checking public keys against signatures, according to t
             Move the public key cursor back one position.
             If more signatures remain than public keys, set success = False and abort loop early.
         If loop was not aborted, success = True.
-        If NULLDUMMY rule is active, then ensure the dummy element is null.
 
-    If success is False and NULLFAIL rule is active, then ensure all signatures were null.
+    If success is False, then ensure all signatures were null.
 
     Push success onto stack
     If opcode is OP_CHECKMULTISIGVERIFY:
@@ -97,11 +95,11 @@ The new mode operates by checking public keys against signatures, according to t
 
 Some features to note:
 
-- In the legacy mode, some of the public keys may be garbage data, even if strict encoding rules are being applied. This is possible since the loop ends before all public keys have been examined.
+- Some of the public keys may be garbage data, even if strict encoding rules are being applied. This is possible since the loop ends before all public keys have been examined.
 - In the new mode, it is not necessary to run findAndDelete ever, since it applies only to transactions well after the BCH fork.
 - In the new mode, `checkbits` must be minimally encoded, regardless of MINIMALDATA flag (as the latter not a consensus rule).
 - The new mode design means that `checkbits` has only one valid representation for a given set of signatures, provided that all public keys are distinct. Thus ordinarily, it is not malleable. Note however that if some public keys are repeated, however, then it may be possible to reorder the signatures and/or flip bits to apply the signature checks to different public keys.
-- For a failing CHECKMULTISIG (that returns False on stack), the previously adopted NULLFAIL consensus rule means that all signatures must be null. However, only the last public key needs to be correctly encoded. If all pubkeys are correctly encoded, then the new mode executes and the checkbits element must be zero (null). If any keys are not correctly encoded, then legacy mode executes and the dummy element need only be null if the NULLDUMMY flag is adopted.
+- For a failing CHECKMULTISIG (that returns False on stack), the previously adopted NULLFAIL consensus rule means that all signatures must be null. However, only the last public key needs to be correctly encoded. The checkbits value must also be null.
 - In the legacy mode, it can require up to N signature checks in order to complete. In new mode, at most M signature checks occur.
 - For M=0, the opcode always evaluates True.
 
@@ -157,13 +155,11 @@ That said, a scan of the blockchain only found about a hundred instances of scri
 Allowing mixed signature types might help alleviate the issue of supporting mixed wallet versions that do support / don't support Schnorr signatures.
 However, this would mean that an all-ECDSA signature list could be easily converted to the new mode, unless extra complicated steps were taken to prevent that conversion. As this is an undesirable malleability mechanism, we opted to simply exclude ECDSA from the new mode, just as Schnorr are excluded from the legacy mode.
 
-## Triggering on pubkey and signature encoding validity
+## Triggering on dummy element
 
-An alternative, slightly simpler trigger mechanism would be to trigger on the dummy element being non-null, which cou.d make things overall simpler as it automatically integrates the 'nulldummy' rule.
+Triggering on the dummy element automatically integrates the 'nulldummy' rule.
 
-The choice to trigger on public key and signature validity is done so that the new mode is able to support both true- and false- returning executions of checkmultisig; for the false-returning execution, it is required for the dummy element to be null.
-
-In addition, it is valuable if the new mode has been implemented with strict public key encodings for all public keys, as it is expected that this strict context would help simplify future introductions of alternative signature schemes (with different pubkey encodings).
+Although checkbits value of 0 creates an ambiguity between Mode 1 and Mode 2 for false-returning checkmultisig, in practice the two modes should have indistinguishable behavior in this case.
 
 # Acknowledgements
 
