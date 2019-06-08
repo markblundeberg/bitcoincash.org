@@ -48,7 +48,7 @@ Whether to execute in mode 1 or mode 2 is detemined by the value of the checkbit
 * If the checkbits element is NULL, then Mode 1 is executed
 * If the checkbits element is non-NULL, then Mode 2 is executed.
 
-In practice "0-of-N" behavior is indistinguishable between the two modes.
+"0-of-N" will always execute in Mode 1, since the checkbits/dummy element needs to be null for this case.
 
 The new mode operates by checking public keys against signatures, according to the `checkbits` number. In pseudocode, the full OP_CHECKMULTISIG code is:
 
@@ -66,6 +66,7 @@ The new mode operates by checking public keys against signatures, according to t
         Loop while the signature and key cursors are not depleted:
             If the least significant bit of checkbits is 1, then:
                 If the current pubkey is not correctly encoded, fail script.
+                If the signature is not encoded correctly, fail script (Schnorr signature must be 64 bytes, and the hashtype byte needs to be checked).
                 Validate the current signature against the current public key; if invalid, fail script.
                 Move the signature cursor back one position.
             Shift checkbits right by one bit. (checkbits := checkbits >> 1)
