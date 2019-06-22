@@ -102,7 +102,7 @@ Some features of the specification are worth emphasizing:
 - The legacy mode has unaltered functionality, except being restricted to only use a null dummy element.
 - In both modes, public keys only have their encoding checked just prior to performing a signature check. The unchecked public keys may be arbitrary data.
 - Signature and pubkey iteration always starts at the last public key and signature (the last pushed on stack). In legacy mode, the precise order of checking is critical to obtaining a correct implementation, due to the public key encoding rule.
-- Note that the numbers `N`, `M`, and `checkbits` will all require minimal encoding, per activation of the minimal number encoding rule (see XXXlinkXXX).
+- Note that the numbers `N`, `M`, and `checkbits` will all require minimal encoding, per activation of the minimal number encoding rule (see https://github.com/bitcoincashorg/bitcoincash.org/pull/376/files).
 - Only the least significant N bits may be set in `checkbits`, i.e., if `checkbits` exceeds 2<sup>N</sup>-1 then the script will fail.
 - If `checkbits` has more than `M` bits set, the script will fail.
 - If `checkbits` is nonzero but has fewer than `M` bits set, then the script will fail either due to an invalid signature, or because of NULLFAIL. In other words, providing only some valid Schnorr signatures (but not enough of them) will cause a script failure.
