@@ -139,6 +139,10 @@ The new mode scriptSig `<sig0> ... <sigN>` will have a length that varies depend
 * Up to 66M + R + 3 bytes, for 8 <= N <= 15.
 * Up to 66M + R + 4 bytes, for 16 <= N <= 20.
 
+## Pubkey Encoding
+
+It is strongly recommended that wallets never create scripts with non-strictly encoded pubkeys, even though this specification allows them under certain circumstances. It is possible that this rule  may be tightened in the future, to stipulate that all pubkeys must be strictly encoded. If that were to happen, any outputs violating this rule would become un-spendable.
+
 # Rationale and commentary on design decisions
 
 ## Repurposing of dummy element
