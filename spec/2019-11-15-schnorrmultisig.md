@@ -1,9 +1,9 @@
 ---
 layout: specification
 title: 2019-NOV-15 Schnorr OP_CHECKMULTISIG specification
-date: 2019-06-22
+date: 2019-06-29
 activation: x
-version: 0.6 (DRAFT)
+version: 0.7 (DRAFT)
 author: Mark B. Lundeberg
 ---
 
@@ -21,7 +21,7 @@ In [the last upgrade](2019-05-15-upgrade.md), we added Schnorr support to OP_CHE
 
 Although we could have added support to OP_CHECKMULTISIG as well (which would have been overall simpler), this would conflict with the desire to do batch verification in future: Currently with OP_CHECKMULTISIG validation, it is needed to check a signature against multiple public keys in order to find a possible match. In Schnorr batch verification however, it is required to know ahead of time, which signatures are supposed to match with which public keys. Without a clear path forward on how to resolve this, we postponed the issue and simply prevented Schnorr signatures from being used in OP_CHECKMULTISIG.
 
-Schnorr aggregated signatures (with OP_CHECKSIG) are one way to do multisignatures, but they are technically limited and thus far from being a drop-in replacement for the familiar Bitcoin multisig. Besides that, it is also desirable that any existing coin can be spent using Schnorr signatures, and there are numerous OP_CHECKMULTISIG-based wallets and coins in existence that we want to be able to take advantage of Schnorr signatures.
+Schnorr aggregated signatures (with OP_CHECKSIG) are one way to do multisignatures, but they have different technical properties than the familiar Bitcoin multisig, and thus are far from being a drop-in replacement for it. Besides that, it is also desirable that any existing coin can be spent using Schnorr signatures, and there are numerous OP_CHECKMULTISIG-based wallets and coins in existence that we want to be able to take advantage of Schnorr signatures.
 
 # Specification
 
